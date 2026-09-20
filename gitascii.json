@@ -43,7 +43,9 @@
         "dotColor": "#4d3a66",
         "hideBorder": true,
         "valueColor": "#e6fbfb",
-        "dividerColor": "#2d1f3f"
+        "dividerColor": "#2d1f3f",
+        "showStars": false,
+        "showGists": false
       },
       "locked": false,
       "visible": true,
@@ -114,31 +116,34 @@
       "instanceId": "widget_1789920403818_5"
     },
     {
-      "instanceId": "widget_1789921678444",
-      "widgetId": "repositories",
-      "name": "Repositories Widget",
+      "instanceId": "widget_1789923397980",
+      "widgetId": "codeweb-social-badge",
+      "name": "Codeweb-social-badge Widget",
       "position": {
         "x": 0,
         "y": 512
       },
       "size": {
         "width": 800,
-        "height": 320
+        "height": 88
       },
       "config": {
-        "repoCardHeight": 52,
-        "hideBorder": true,
-        "repoViewMode": "list",
-        "maxRepos": 4,
-        "showRepoStars": false,
+        "platforms": [
+          "linkedin",
+          "gmail",
+          "instagram"
+        ],
+        "renderMode": "multi",
+        "label_github": "",
+        "label_linkedin": "michalkwak",
+        "label_gmail": "michal.kwak2806@gmail.com",
+        "label_instagram": "@michalkwak",
         "animationType": "fade-in",
-        "animationPreviewKey": 1,
-        "selectedRepos": [],
-        "accentColor": "#00ffff"
+        "animationPreviewKey": 1
       },
       "locked": false,
       "visible": true,
-      "zIndex": 6
+      "zIndex": 5
     }
   ],
   "globalStyles": {
