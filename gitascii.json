@@ -1,0 +1,156 @@
+{
+  "widgets": [
+    {
+      "widgetId": "header",
+      "name": "Header Widget",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "size": {
+        "width": 800,
+        "height": 90
+      },
+      "config": {
+        "accentColor": "#ff4a4a",
+        "lockAspectRatio": false,
+        "textColor": "#00ffff"
+      },
+      "locked": false,
+      "visible": true,
+      "zIndex": 1,
+      "instanceId": "widget_1789920403818_0"
+    },
+    {
+      "widgetId": "terminal-info",
+      "name": "Terminal-info Widget",
+      "position": {
+        "x": 0,
+        "y": 98
+      },
+      "size": {
+        "width": 544,
+        "height": 296
+      },
+      "config": {
+        "animationType": "scan-lines",
+        "animationPreviewKey": 4,
+        "showStatus": true,
+        "showEmail": true,
+        "headerColor": "#55ffff",
+        "labelColor": "#ff3366",
+        "statsValColor": "#55ffff",
+        "dotColor": "#4d3a66",
+        "hideBorder": true,
+        "valueColor": "#e6fbfb",
+        "dividerColor": "#2d1f3f"
+      },
+      "locked": false,
+      "visible": true,
+      "zIndex": 3,
+      "instanceId": "widget_1789920403818_2"
+    },
+    {
+      "widgetId": "languages",
+      "name": "Languages Widget",
+      "position": {
+        "x": 0,
+        "y": 362
+      },
+      "size": {
+        "width": 528,
+        "height": 160
+      },
+      "config": {
+        "animationType": "fade-in",
+        "animationPreviewKey": 3,
+        "langsLayout": "bars",
+        "showPercentage": false,
+        "hideBorder": true,
+        "accentColor": "#88c0d0"
+      },
+      "locked": false,
+      "visible": true,
+      "zIndex": 4,
+      "instanceId": "widget_1789920403818_3"
+    },
+    {
+      "widgetId": "tech-stack",
+      "name": "Tech-stack Widget",
+      "position": {
+        "x": 528,
+        "y": 90
+      },
+      "size": {
+        "width": 240,
+        "height": 272
+      },
+      "config": {
+        "selectedTechs": [
+          "js",
+          "html",
+          "css",
+          "py",
+          "cs",
+          "r",
+          "react",
+          "vite",
+          "express",
+          "nodejs",
+          "postgres",
+          "mongodb",
+          "git",
+          "postman"
+        ],
+        "theme": "dark",
+        "perLine": 4,
+        "animationType": "fade-in",
+        "animationPreviewKey": 1,
+        "hideBorder": true
+      },
+      "locked": false,
+      "visible": true,
+      "zIndex": 6,
+      "instanceId": "widget_1789920403818_5"
+    },
+    {
+      "instanceId": "widget_1789921678444",
+      "widgetId": "repositories",
+      "name": "Repositories Widget",
+      "position": {
+        "x": 0,
+        "y": 512
+      },
+      "size": {
+        "width": 800,
+        "height": 320
+      },
+      "config": {
+        "repoCardHeight": 52,
+        "hideBorder": true,
+        "repoViewMode": "list",
+        "maxRepos": 4,
+        "showRepoStars": false,
+        "animationType": "fade-in",
+        "animationPreviewKey": 1,
+        "selectedRepos": [],
+        "accentColor": "#00ffff"
+      },
+      "locked": false,
+      "visible": true,
+      "zIndex": 6
+    }
+  ],
+  "globalStyles": {
+    "backgroundColor": "#060606",
+    "textColor": "#e5e5e5",
+    "accentColor": "#c5ff4a",
+    "borderColor": "#252525",
+    "fontFamily": "'JetBrains Mono', monospace",
+    "borderRadius": 0,
+    "padding": 24,
+    "themeMode": "dark",
+    "templateStyle": "native"
+  },
+  "templateId": "terminal"
+}
