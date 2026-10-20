@@ -144,6 +144,7 @@ def style(c):
     return f"""<style>
     text {{ font-family: {FONT}; font-variant-numeric: tabular-nums; }}
     .lbl {{ font-size: 11px; letter-spacing: 1.6px; fill: {c['muted']}; }}
+    .hd {{ font-size: 13px; font-weight: 700; letter-spacing: 1.8px; fill: {c['text']}; }}
     .pop {{ transform-box: fill-box; transform-origin: center; animation: pop .45s ease-out backwards; }}
     .fc {{ transform-box: fill-box; transform-origin: center;
            animation: pop .45s ease-out backwards, breathe 2.8s ease-in-out infinite; }}
@@ -195,9 +196,9 @@ def card(s, c):
             f'<text x="{cx}" y="{cy + 28}" font-size="12" fill="{c["muted"]}" text-anchor="middle">mg/dL</text>']
 
     # focus / now
-    out += [f'<text class="lbl" x="200" y="172">FOCUS</text>',
+    out += [f'<text class="hd" x="200" y="170">FOCUS</text>',
             f'<text x="200" y="196" font-size="17" fill="{c["text"]}">{escape(FOCUS)}</text>',
-            f'<text class="lbl" x="200" y="232">NOW</text>',
+            f'<text class="hd" x="200" y="230">NOW</text>',
             f'<text x="200" y="256" font-size="17" fill="{c["text"]}">{escape(NOW)}</text>']
 
     # graph: title and hour selector
