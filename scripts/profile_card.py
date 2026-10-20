@@ -1,4 +1,5 @@
-"""Generate the profile card (top image + three clickable social slices) as dark/light SVGs, with live GitHub stats.
+"""Generate the profile card (top image + three clickable social slices) as dark/light, desktop/mobile SVGs,
+with live GitHub stats.
 
 Usage: python scripts/profile_card.py OUT_DIR
 GITHUB_TOKEN (optional) enables the GraphQL commit count and higher API rate limits.
@@ -11,14 +12,15 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from html import escape
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 USER = "michalkwak"
 NAME = "Michał Kwak"
 SUBTITLE = "@michalkwak · University of Helsinki · Helsinki"
 FOCUS = "Software development · Data science · AI in Biomedicine"
 NOW = "Machine Learning for Hypoglycemia Prediction"
-STACK = ["python", "r", "csharp", "javascript", "html5", "css3", "react", "vite",
-         "nodedotjs", "express", "postgresql", "mongodb", "git", "postman"]
+STACK = ["python", "r", "jupyter", "numpy", "pandas", "scikitlearn", "streamlit", "django",  # data / ML first
+         "javascript", "react", "nodedotjs", "postgresql", "git"]
 SOCIALS = [  # (file name, icon, title, handle, brand color); each becomes one clickable slice of the card
     ("linkedin", "linkedin", "LinkedIn", "michalkwak", "#0A66C2"),
     ("email", "gmail", "Email", "michal.kwak2806@gmail.com", "#EA4335"),
@@ -81,6 +83,14 @@ def count_contributions(created):
     return total
 
 
+def helsinki_date(now):
+    try:
+        now = now.astimezone(ZoneInfo("Europe/Helsinki"))
+    except ZoneInfoNotFoundError:  # no tz database (e.g. Windows without tzdata): keep UTC
+        pass
+    return f"{now.day} {now:%b %Y}"
+
+
 def fetch_stats():
     user = api(f"/users/{USER}")
     repos = [r for r in api(f"/users/{USER}/repos?per_page=100&type=owner") if not r["fork"]]
@@ -100,7 +110,7 @@ def fetch_stats():
         "followers": user["followers"],
         "age": f"{months // 12}y {months % 12}m" if months >= 12 else f"{months}m",
         "langs": [lang for lang, _ in sorted(langs.items(), key=lambda kv: kv[1], reverse=True)],
-        "updated": f"{now.day} {now:%b %Y}",
+        "updated": helsinki_date(now),
     }
 
 
@@ -125,19 +135,27 @@ def readings():
 
 # ---------------------------------------------------------------- drawing
 
-W, H, PAD = 900, 872, 40    # H: card top; the social row slices close the card below it
-ROW_H, R = 88, 18            # social row height, card corner radius
-X0, X1 = PAD, 800            # plot x range (0 .. 210 min)
-Y0, Y1 = 330, 520            # plot y range (300 .. 40 mg/dL)
-
-
-def gx(t): return X0 + t * (X1 - X0) / 210
-def gy(g): return Y1 - (g - 40) * (Y1 - Y0) / 260
+W, H, PAD, R = 900, 872, 40, 18         # desktop: card top (social slices close it below), corner radius
+MW, MPAD, MR = 402, 20, 14              # mobile: same structure, single column (height follows content)
+ROW_H, M_ROW_H = 88, 96                 # social row height (desktop, mobile)
 
 
 def icon(name, x, y, size, fill):
     return (f'<g transform="translate({x:.1f},{y:.1f}) scale({size / 24:.4f})">'
             f'<path d="{ICONS[name]}" fill="{fill}"/></g>')
+
+
+def wrap(parts, sep, size, width):
+    """Greedy line wrap of `parts` joined by `sep`, using an average glyph width estimate."""
+    lines, line = [], ""
+    for part in parts:
+        candidate = f"{line}{sep}{part}" if line else part
+        if line and len(candidate) * size * 0.53 > width:
+            lines.append(line)
+            line = part
+        else:
+            line = candidate
+    return lines + [line]
 
 
 def style(c):
@@ -164,143 +182,226 @@ def style(c):
   </style>"""
 
 
-def card(s, c):
-    outline = f"M.5,{H} V{R + .5} A{R},{R} 0 0 1 {R + .5},.5 H{W - R - .5} A{R},{R} 0 0 1 {W - .5},{R + .5} V{H}"
-    out = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" '
-           f'role="img" aria-labelledby="t d">',
-           f'<title id="t">{escape(NAME)}</title>',
-           f'<desc id="d">{escape(FOCUS)}. {escape(NOW)}. {s["repos"]} repositories, '
-           f'{s["commits"]} commits, {s["followers"]} followers.</desc>',
-           style(c),
-           f'<path d="{outline}" fill="{c["bg"]}" stroke="{c["border"]}"/>']  # open at the bottom
+def svg_open(s, c, w, h, r):
+    outline = f"M.5,{h} V{r + .5} A{r},{r} 0 0 1 {r + .5},.5 H{w - r - .5} A{r},{r} 0 0 1 {w - .5},{r + .5} V{h}"
+    return [f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}" '
+            f'role="img" aria-labelledby="t d">',
+            f'<title id="t">{escape(NAME)}</title>',
+            f'<desc id="d">{escape(FOCUS)}. {escape(NOW)}. {s["repos"]} repositories, '
+            f'{s["commits"]} commits, {s["followers"]} followers.</desc>',
+            style(c),
+            f'<path d="{outline}" fill="{c["bg"]}" stroke="{c["border"]}"/>']  # open at the bottom
 
-    # header
+
+def ring(c, cx, cy, r, stroke, num_size):
+    """Current reading with a falling (45 degree) trend arrow on the ring's edge."""
+    k = r / 56
+    tip = (cx + (r + 22 * k) * .7071, cy + (r + 22 * k) * .7071)
+    b1 = (cx + (r + 9 * k) * .7071, cy + (r - 9 * k) * .7071)
+    b2 = (cx + (r - 9 * k) * .7071, cy + (r + 9 * k) * .7071)
+    return [f'<circle class="ring" cx="{cx}" cy="{cy}" r="{r}" pathLength="1" fill="none" stroke="{c["ring"]}" '
+            f'stroke-width="{stroke}" transform="rotate(-90 {cx} {cy})"/>',
+            f'<polygon class="fade" style="animation-delay:1.2s" fill="{c["ring"]}" points="'
+            f'{tip[0]:.1f},{tip[1]:.1f} {b1[0]:.1f},{b1[1]:.1f} {b2[0]:.1f},{b2[1]:.1f}"/>',
+            f'<text class="fade" x="{cx}" y="{cy + num_size * .2:.1f}" font-size="{num_size}" font-weight="700" '
+            f'fill="{c["text"]}" text-anchor="middle">{CTRL[-1]}</text>',
+            f'<text x="{cx}" y="{cy + num_size * .7:.1f}" font-size="{12 if num_size > 32 else 10}" '
+            f'fill="{c["muted"]}" text-anchor="middle">mg/dL</text>']
+
+
+def graph(c, x0, x1, top, y0, y1, compact=False):
+    """CGM-app style graph: title + hour selector at `top`, plot between y0 and y1, time axis below."""
+    def gx(t): return x0 + t * (x1 - x0) / 210
+    def gy(g): return y1 - (g - 40) * (y1 - y0) / 260
+    def tone(g): return c["high"] if g > 180 else c["low"] if g < 70 else c["dot"]
+    fs, dot = (10, 2.8) if compact else (12, 4.2)
+    right = x1 + (30 if compact else 60)  # right edge of the axis labels
+
+    out = [f'<text class="lbl" x="{x0}" y="{top}">CGM · LAST 3 HOURS</text>']
+    hours = ["3", "6", "12", "24"]
+    pill_w = 4 * 32 + 6 + (0 if compact else 78)
+    sx = right - pill_w
+    out += [f'<rect x="{sx}" y="{top - 18}" width="{pill_w}" height="28" rx="14" fill="{c["pill"]}"/>',
+            f'<rect x="{sx + 3}" y="{top - 15}" width="30" height="22" rx="11" fill="{c["text"]}"/>']
+    for i, h in enumerate(hours):
+        out.append(f'<text x="{sx + 18 + i * 32}" y="{top}" font-size="12" font-weight="600" '
+                   f'fill="{c["bg"] if i == 0 else c["muted"]}" text-anchor="middle">{h}</text>')
+    if not compact:
+        out.append(f'<text x="{sx + 170}" y="{top}" font-size="11" letter-spacing="1.2" fill="{c["muted"]}" '
+                   f'text-anchor="middle">HOURS</text>')
+
+    out += [f'<rect x="{x0}" y="{gy(180):.1f}" width="{x1 - x0}" height="{gy(70) - gy(180):.1f}" fill="{c["band"]}"/>',
+            f'<line x1="{x0}" y1="{gy(250):.1f}" x2="{x1}" y2="{gy(250):.1f}" stroke="{c["faint"]}" stroke-dasharray="2 4"/>',
+            f'<line x1="{x0}" y1="{gy(180):.1f}" x2="{x1}" y2="{gy(180):.1f}" stroke="{c["high"]}" stroke-width="1.5"/>',
+            f'<line x1="{x0}" y1="{gy(70):.1f}" x2="{x1}" y2="{gy(70):.1f}" stroke="{c["low"]}" stroke-width="1.5"/>']
+    for g, color in [(250, c["muted"]), (180, c["high"]), (70, c["low"])]:
+        out.append(f'<text x="{x1 + fs + 2}" y="{gy(g) + fs / 3:.1f}" font-size="{fs}" fill="{color}">{g}</text>')
+    for t, label in [(0, "-3h"), (60, "-2h"), (120, "-1h"), (180, "Now"), (210, "+30m")]:
+        anchor = "start" if t == 0 else "end" if t == 210 else "middle"
+        out.append(f'<text x="{gx(t):.1f}" y="{y1 + 24}" font-size="{fs}" fill="{c["muted"]}" '
+                   f'text-anchor="{anchor}">{label}</text>')
+    out.append(f'<line x1="{gx(180):.1f}" y1="{y0 + 18}" x2="{gx(180):.1f}" y2="{y1}" stroke="{c["faint"]}"/>')
+
+    # readings (filled) and forecast (hollow), colored by range like a CGM app
+    pts = readings()
+    for i, (t, g) in enumerate(pts):
+        out.append(f'<circle class="pop" style="animation-delay:{i * 35}ms" cx="{gx(t):.1f}" cy="{gy(g):.1f}" '
+                   f'r="{dot}" fill="{tone(g)}"/>')
+    t_now, g_now = pts[-1]
+    out.append(f'<circle class="pulse" cx="{gx(t_now):.1f}" cy="{gy(g_now):.1f}" r="{dot}" fill="none" '
+               f'stroke="{c["dot"]}" stroke-width="1.5"/>')
+    for i, g in enumerate(FORECAST):
+        delay = len(pts) * 35 + 200 + i * 80
+        out.append(f'<circle class="fc" style="animation-delay:{delay}ms,{delay + 600}ms" '
+                   f'cx="{gx(185 + 5 * i):.1f}" cy="{gy(g):.1f}" r="{dot * .86:.1f}" fill="none" '
+                   f'stroke="{tone(g)}" stroke-width="1.6"/>')
+    out.append(f'<text class="fade" style="animation-delay:2s" x="{x1}" y="{y0 + 4}" font-size="{fs}" '
+               f'fill="{c["low"]}" text-anchor="end">Low predicted within 30 min</text>')
+    return out
+
+
+def tiles(s, c, x, y, w, cols, size):
+    items = [("REPOS", s["repos"]), ("COMMITS", s["commits"]),
+             ("FOLLOWERS", s["followers"]), ("ON GITHUB", s["age"])]
+    tw, out = w / cols, []
+    for i, (label, value) in enumerate(items):
+        col, row = i % cols, i // cols
+        tx, ty = x + col * tw, y + row * 70
+        if col:
+            out.append(f'<line x1="{tx:.1f}" y1="{ty}" x2="{tx:.1f}" y2="{ty + 52}" stroke="{c["faint"]}"/>')
+            tx += 20
+        out.append(f'<text class="fade" style="animation-delay:{300 + i * 90}ms" x="{tx:.1f}" y="{ty + 28}" '
+                   f'font-size="{size}" font-weight="700" fill="{c["text"]}">{escape(str(value))}</text>')
+        out.append(f'<text class="lbl" x="{tx:.1f}" y="{ty + 50}">{label}</text>')
+    return out
+
+
+def languages(s, c, x, y, w, names_under=True):
+    """Equal segments with names only (no ratios); `names_under=False` puts a wrapped legend below instead.
+    Returns the elements and the baseline of the last text line."""
+    out = [f'<text class="lbl" x="{x}" y="{y}">LANGUAGES</text>']
+    top, gap = s["langs"][:5], 8
+    seg_w = (w - gap * (len(top) - 1)) / max(len(top), 1)
+    lx, ly = x, y + 40
+    for i, lang in enumerate(top):
+        sx, color = x + i * (seg_w + gap), LANG_COLORS.get(lang, c["muted"])
+        out.append(f'<rect class="grow" style="animation-delay:{400 + i * 120}ms" x="{sx:.1f}" y="{y + 12}" '
+                   f'width="{seg_w:.1f}" height="6" rx="3" fill="{color}"/>')
+        if names_under:
+            out.append(f'<text x="{sx:.1f}" y="{y + 40}" font-size="12" fill="{c["text"]}">{escape(lang)}</text>')
+            continue
+        item_w = 14 + len(lang) * 12 * 0.53 + 16
+        if lx + item_w > x + w:
+            lx, ly = x, ly + 22
+        out += [f'<circle cx="{lx + 4}" cy="{ly - 4}" r="4" fill="{color}"/>',
+                f'<text x="{lx + 14}" y="{ly}" font-size="12" fill="{c["text"]}">{escape(lang)}</text>']
+        lx += item_w
+    return out, ly
+
+
+def stack(c, x, y, w, per_row):
+    out = [f'<text class="lbl" x="{x}" y="{y}">STACK</text>']
+    step = w / per_row
+    for i, name in enumerate(STACK):
+        col, row = i % per_row, i // per_row
+        out.append(f'<g class="fade" style="animation-delay:{600 + i * 50}ms">'
+                   f'{icon(name, x + col * step + (step - 22) / 2, y + 12 + row * 40, 22, c["icon"])}</g>')
+    return out
+
+
+def card(s, c):
+    out = svg_open(s, c, W, H, R)
     out += [f'<text x="{PAD}" y="64" font-size="28" font-weight="700" fill="{c["text"]}">{escape(NAME)}</text>',
             f'<text x="{PAD}" y="90" font-size="14" fill="{c["muted"]}">{escape(SUBTITLE)}</text>',
             f'<circle class="live" cx="{W - PAD - 132}" cy="56" r="4" fill="{c["live"]}"/>',
             f'<text x="{W - PAD}" y="60" font-size="12" fill="{c["muted"]}" text-anchor="end">'
             f'Updated {s["updated"]}</text>',
             f'<line x1="{PAD}" y1="118" x2="{W - PAD}" y2="118" stroke="{c["faint"]}"/>']
-
-    # reading ring with trend arrow (falling, 45 degrees)
-    cx, cy, r = 106, 206, 56
-    tip, b1, b2 = (cx + (r + 22) * .7071, cy + (r + 22) * .7071), \
-        (cx + r * .7071 + 9 * .7071, cy + r * .7071 - 9 * .7071), \
-        (cx + r * .7071 - 9 * .7071, cy + r * .7071 + 9 * .7071)
-    out += [f'<circle class="ring" cx="{cx}" cy="{cy}" r="{r}" pathLength="1" fill="none" stroke="{c["ring"]}" '
-            f'stroke-width="7" transform="rotate(-90 {cx} {cy})"/>',
-            f'<polygon class="fade" style="animation-delay:1.2s" fill="{c["ring"]}" points="'
-            f'{tip[0]:.1f},{tip[1]:.1f} {b1[0]:.1f},{b1[1]:.1f} {b2[0]:.1f},{b2[1]:.1f}"/>',
-            f'<text class="fade" x="{cx}" y="{cy + 8}" font-size="40" font-weight="700" fill="{c["text"]}" '
-            f'text-anchor="middle">{CTRL[-1]}</text>',
-            f'<text x="{cx}" y="{cy + 28}" font-size="12" fill="{c["muted"]}" text-anchor="middle">mg/dL</text>']
-
-    # focus / now
+    out += ring(c, 106, 206, 56, 7, 40)
     out += [f'<text class="hd" x="200" y="170">FOCUS</text>',
             f'<text x="200" y="196" font-size="17" fill="{c["text"]}">{escape(FOCUS)}</text>',
             f'<text class="hd" x="200" y="230">NOW</text>',
             f'<text x="200" y="256" font-size="17" fill="{c["text"]}">{escape(NOW)}</text>']
-
-    # graph: title and hour selector
-    out.append(f'<text class="lbl" x="{PAD}" y="300">CGM · LAST 3 HOURS</text>')
-    sel_x = W - PAD - 212
-    out.append(f'<rect x="{sel_x}" y="282" width="212" height="28" rx="14" fill="{c["pill"]}"/>')
-    out.append(f'<rect x="{sel_x + 3}" y="285" width="30" height="22" rx="11" fill="{c["text"]}"/>')
-    for i, h in enumerate(["3", "6", "12", "24"]):
-        fill = c["bg"] if i == 0 else c["muted"]
-        out.append(f'<text x="{sel_x + 18 + i * 32}" y="300" font-size="12" font-weight="600" fill="{fill}" '
-                   f'text-anchor="middle">{h}</text>')
-    out.append(f'<text x="{sel_x + 170}" y="300" font-size="11" letter-spacing="1.2" fill="{c["muted"]}" '
-               f'text-anchor="middle">HOURS</text>')
-
-    # graph: target band, thresholds, grid
-    out += [f'<rect x="{X0}" y="{gy(180):.1f}" width="{X1 - X0}" height="{gy(70) - gy(180):.1f}" fill="{c["band"]}"/>',
-            f'<line x1="{X0}" y1="{gy(250):.1f}" x2="{X1}" y2="{gy(250):.1f}" stroke="{c["faint"]}" stroke-dasharray="2 4"/>',
-            f'<line x1="{X0}" y1="{gy(180):.1f}" x2="{X1}" y2="{gy(180):.1f}" stroke="{c["high"]}" stroke-width="1.5"/>',
-            f'<line x1="{X0}" y1="{gy(70):.1f}" x2="{X1}" y2="{gy(70):.1f}" stroke="{c["low"]}" stroke-width="1.5"/>']
-    for g, color in [(250, c["muted"]), (180, c["high"]), (70, c["low"])]:
-        out.append(f'<text x="{X1 + 14}" y="{gy(g) + 4:.1f}" font-size="12" fill="{color}">{g}</text>')
-    for t, label in [(0, "-3h"), (60, "-2h"), (120, "-1h"), (180, "Now"), (210, "+30m")]:
-        anchor = "start" if t == 0 else "end" if t == 210 else "middle"
-        out.append(f'<text x="{gx(t):.1f}" y="544" font-size="12" fill="{c["muted"]}" text-anchor="{anchor}">{label}</text>')
-    out.append(f'<line x1="{gx(180):.1f}" y1="{Y0 + 18}" x2="{gx(180):.1f}" y2="{Y1}" stroke="{c["faint"]}"/>')
-
-    # graph: readings (filled) and forecast (hollow), colored by range like a CGM app
-    def tone(g): return c["high"] if g > 180 else c["low"] if g < 70 else c["dot"]
-    pts = readings()
-    for i, (t, g) in enumerate(pts):
-        out.append(f'<circle class="pop" style="animation-delay:{i * 35}ms" cx="{gx(t):.1f}" cy="{gy(g):.1f}" '
-                   f'r="4.2" fill="{tone(g)}"/>')
-    t_now, g_now = pts[-1]
-    out.append(f'<circle class="pulse" cx="{gx(t_now):.1f}" cy="{gy(g_now):.1f}" r="4.2" fill="none" '
-               f'stroke="{c["dot"]}" stroke-width="1.5"/>')
-    for i, g in enumerate(FORECAST):
-        delay = len(pts) * 35 + 200 + i * 80
-        out.append(f'<circle class="fc" style="animation-delay:{delay}ms,{delay + 600}ms" '
-                   f'cx="{gx(185 + 5 * i):.1f}" cy="{gy(g):.1f}" r="3.6" fill="none" stroke="{tone(g)}" stroke-width="1.6"/>')
-    out.append(f'<text class="fade" style="animation-delay:2s" x="{X1}" y="{Y0 + 4}" font-size="12" '
-               f'fill="{c["low"]}" text-anchor="end">Low predicted within 30 min</text>')
-
-    # stat tiles
+    out += graph(c, PAD, 800, 300, 330, 520)
     out.append(f'<line x1="{PAD}" y1="580" x2="{W - PAD}" y2="580" stroke="{c["faint"]}"/>')
-    tiles = [("REPOS", s["repos"]), ("COMMITS", s["commits"]),
-             ("FOLLOWERS", s["followers"]), ("ON GITHUB", s["age"])]
-    tw = (W - 2 * PAD) / len(tiles)
-    for i, (label, value) in enumerate(tiles):
-        x = PAD + i * tw
-        if i:
-            out.append(f'<line x1="{x:.1f}" y1="600" x2="{x:.1f}" y2="652" stroke="{c["faint"]}"/>')
-        tx = x + (0 if i == 0 else 20)
-        out.append(f'<text class="fade" style="animation-delay:{300 + i * 90}ms" x="{tx:.1f}" y="628" '
-                   f'font-size="26" font-weight="700" fill="{c["text"]}">{escape(str(value))}</text>')
-        out.append(f'<text class="lbl" x="{tx:.1f}" y="650">{label}</text>')
-
-    # languages: equal segments, names only (no ratios)
-    out.append(f'<text class="lbl" x="{PAD}" y="700">LANGUAGES</text>')
-    top, gap = s["langs"][:5], 8
-    seg_w = (W - 2 * PAD - gap * (len(top) - 1)) / max(len(top), 1)
-    for i, lang in enumerate(top):
-        x = PAD + i * (seg_w + gap)
-        out.append(f'<rect class="grow" style="animation-delay:{400 + i * 120}ms" x="{x:.1f}" y="712" '
-                   f'width="{seg_w:.1f}" height="6" rx="3" fill="{LANG_COLORS.get(lang, c["muted"])}"/>')
-        out.append(f'<text x="{x:.1f}" y="740" font-size="12" fill="{c["text"]}">{escape(lang)}</text>')
-
-    # stack icons
-    out.append(f'<text class="lbl" x="{PAD}" y="790">STACK</text>')
-    step = (W - 2 * PAD) / len(STACK)
-    for i, name in enumerate(STACK):
-        out.append(f'<g class="fade" style="animation-delay:{600 + i * 50}ms">'
-                   f'{icon(name, PAD + i * step + (step - 22) / 2, 802, 22, c["icon"])}</g>')
-
-    out.append(f'<line x1="{PAD}" y1="852" x2="{W - PAD}" y2="852" stroke="{c["faint"]}"/>')
-    out.append("</svg>")
+    out += tiles(s, c, PAD, 600, W - 2 * PAD, 4, 26)
+    out += languages(s, c, PAD, 700, W - 2 * PAD)[0]
+    out += stack(c, PAD, 790, W - 2 * PAD, len(STACK))
+    out += [f'<line x1="{PAD}" y1="852" x2="{W - PAD}" y2="852" stroke="{c["faint"]}"/>', "</svg>"]
     return "\n".join(out) + "\n"
 
 
-def social_slice(i, icon_name, title, handle, brand, c):
+def card_mobile(s, c):
+    """Single-column layout for phone-width screens, switched in by the README's media queries."""
+    cw = MW - 2 * MPAD
+    out = [f'<text x="{MPAD}" y="46" font-size="24" font-weight="700" fill="{c["text"]}">{escape(NAME)}</text>',
+            f'<text x="{MPAD}" y="68" font-size="12" fill="{c["muted"]}">{escape(SUBTITLE)}</text>',
+            f'<circle class="live" cx="{MPAD + 4}" cy="86" r="3.5" fill="{c["live"]}"/>',
+            f'<text x="{MPAD + 14}" y="90" font-size="11" fill="{c["muted"]}">Updated {s["updated"]}</text>',
+            f'<line x1="{MPAD}" y1="108" x2="{MW - MPAD}" y2="108" stroke="{c["faint"]}"/>']
+
+    # ring beside the focus areas (one per line), then the current work full width
+    out += ring(c, MPAD + 44, 172, 42, 6, 30)
+    out.append(f'<text class="hd" x="134" y="140">FOCUS</text>')
+    for i, area in enumerate(FOCUS.split(" · ")):
+        out.append(f'<text x="134" y="{162 + i * 20}" font-size="15" fill="{c["text"]}">{escape(area)}</text>')
+    out.append(f'<text class="hd" x="{MPAD}" y="246">NOW</text>')
+    now_lines = wrap(NOW.split(), " ", 15, cw)
+    for i, line in enumerate(now_lines):
+        out.append(f'<text x="{MPAD}" y="{268 + i * 20}" font-size="15" fill="{c["text"]}">{escape(line)}</text>')
+    y = 268 + (len(now_lines) - 1) * 20
+
+    out += graph(c, MPAD, MW - MPAD - 30, y + 52, y + 74, y + 214, compact=True)
+    y += 266
+    out.append(f'<line x1="{MPAD}" y1="{y}" x2="{MW - MPAD}" y2="{y}" stroke="{c["faint"]}"/>')
+    out += tiles(s, c, MPAD, y + 20, cw, 2, 24)
+    lang, legend_bottom = languages(s, c, MPAD, y + 180, cw, names_under=False)
+    out += lang
+    y = legend_bottom + 44
+    out += stack(c, MPAD, y, cw, 7)
+    rows = -(-len(STACK) // 7)
+    h = round(y + 12 + rows * 40 + 26)
+    out.append(f'<line x1="{MPAD}" y1="{h - 20}" x2="{MW - MPAD}" y2="{h - 20}" stroke="{c["faint"]}"/>')
+    return "\n".join(svg_open(s, c, MW, h, MR) + out + ["</svg>"]) + "\n"
+
+
+def social_slice(i, icon_name, title, handle, brand, c, mobile=False):
     """One third of the card's bottom row: its own image, so the README can wrap it in a link."""
-    sw, bw, bh = W // 3, 250, 56
-    bx, by = (sw - bw) / 2, 12
+    sw, rh, r = ((MW // 3, M_ROW_H, MR) if mobile else (W // 3, ROW_H, R))
     if i == 0:      # left edge with bottom-left corner
-        edge = f"M.5,0 V{ROW_H - R - .5} A{R},{R} 0 0 0 {R + .5},{ROW_H - .5} H{sw}"
+        edge = f"M.5,0 V{rh - r - .5} A{r},{r} 0 0 0 {r + .5},{rh - .5} H{sw}"
     elif i == 2:    # bottom edge with bottom-right corner
-        edge = f"M0,{ROW_H - .5} H{sw - R - .5} A{R},{R} 0 0 0 {sw - .5},{ROW_H - R - .5} V0"
+        edge = f"M0,{rh - .5} H{sw - r - .5} A{r},{r} 0 0 0 {sw - .5},{rh - r - .5} V0"
     else:
-        edge = f"M0,{ROW_H - .5} H{sw}"
-    ax, ay = bx + bw - 30, by + bh / 2 - 5  # "open link" arrow
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{sw}" height="{ROW_H}" viewBox="0 0 {sw} {ROW_H}" '
+        edge = f"M0,{rh - .5} H{sw}"
+    if mobile:      # compact tile: icon above the name, no handle
+        bw, bh = sw - 16, 64
+        bx, by = (sw - bw) / 2, 8
+        ax, ay = bx + bw - 18, by + 8
+        content = (f'{icon(icon_name, sw / 2 - 11, by + 12, 22, brand)}\n'
+                   f'<text x="{sw / 2}" y="{by + 54}" font-size="13" font-weight="600" fill="{c["text"]}" '
+                   f'text-anchor="middle">{escape(title)}</text>\n')
+    else:
+        bw, bh = 250, 56
+        bx, by = (sw - bw) / 2, 12
+        ax, ay = bx + bw - 30, by + bh / 2 - 5
+        content = (f'{icon(icon_name, bx + 18, by + 17, 22, brand)}\n'
+                   f'<text x="{bx + 54}" y="{by + 25}" font-size="14" font-weight="600" fill="{c["text"]}">'
+                   f'{escape(title)}</text>\n'
+                   f'<text x="{bx + 54}" y="{by + 43}" font-size="11.5" fill="{c["muted"]}">{escape(handle)}</text>\n')
+    arrow = 10 if not mobile else 8  # "open link" arrow
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{sw}" height="{rh}" viewBox="0 0 {sw} {rh}" '
             f'role="img" aria-label="{escape(title)}: {escape(handle)}">\n'
             f'<style>text {{ font-family: {FONT}; }} g {{ animation: fade .8s ease-out 1.4s backwards; }} '
             f'@keyframes fade {{ from {{ opacity: 0; }} }} '
             f'@media (prefers-reduced-motion: reduce) {{ g {{ animation: none; }} }}</style>\n'
             f'<path d="{edge} V0 Z" fill="{c["bg"]}"/>\n'
             f'<path d="{edge}" fill="none" stroke="{c["border"]}"/>\n'
-            f'<g><rect x="{bx}" y="{by}" width="{bw}" height="{bh}" rx="14" fill="{c["btn"]}" stroke="{c["btn_edge"]}"/>\n'
-            f'{icon(icon_name, bx + 18, by + 17, 22, brand)}\n'
-            f'<text x="{bx + 54}" y="{by + 25}" font-size="14" font-weight="600" fill="{c["text"]}">{escape(title)}</text>\n'
-            f'<text x="{bx + 54}" y="{by + 43}" font-size="11.5" fill="{c["muted"]}">{escape(handle)}</text>\n'
-            f'<path d="M{ax},{ay + 10} L{ax + 10},{ay} M{ax + 3},{ay} H{ax + 10} V{ay + 7}" fill="none" '
-            f'stroke="{c["muted"]}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></g>\n'
+            f'<g><rect x="{bx}" y="{by}" width="{bw}" height="{bh}" rx="{12 if mobile else 14}" fill="{c["btn"]}" '
+            f'stroke="{c["btn_edge"]}"/>\n{content}'
+            f'<path d="M{ax},{ay + arrow} L{ax + arrow},{ay} M{ax + arrow * .3:.1f},{ay} H{ax + arrow} '
+            f'V{ay + arrow * .7:.1f}" fill="none" stroke="{c["muted"]}" stroke-width="1.6" '
+            f'stroke-linecap="round" stroke-linejoin="round"/></g>\n'
             f'</svg>\n')
 
 
@@ -310,9 +411,11 @@ def main():
     stats = fetch_stats()
     for theme, colors in THEMES.items():
         (out / f"card-{theme}.svg").write_text(card(stats, colors), encoding="utf-8")
+        (out / f"card-mobile-{theme}.svg").write_text(card_mobile(stats, colors), encoding="utf-8")
         for i, (file, icon_name, title, handle, brand) in enumerate(SOCIALS):
-            (out / f"{file}-{theme}.svg").write_text(
-                social_slice(i, icon_name, title, handle, brand, colors), encoding="utf-8")
+            for mobile, suffix in [(False, ""), (True, "-mobile")]:
+                (out / f"{file}{suffix}-{theme}.svg").write_text(
+                    social_slice(i, icon_name, title, handle, brand, colors, mobile), encoding="utf-8")
     print(json.dumps({k: v for k, v in stats.items() if k != "langs"}), stats["langs"][:5])
 
 
