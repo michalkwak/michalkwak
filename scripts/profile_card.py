@@ -5,6 +5,7 @@ Usage: python scripts/profile_card.py OUT_DIR
 GITHUB_TOKEN (optional) enables the GraphQL commit count and higher API rate limits.
 """
 import json
+import math
 import os
 import random
 import sys
@@ -83,12 +84,12 @@ def count_contributions(created):
     return total
 
 
-def helsinki_date(now):
+def helsinki_now():
+    now = datetime.now(timezone.utc)
     try:
-        now = now.astimezone(ZoneInfo("Europe/Helsinki"))
+        return now.astimezone(ZoneInfo("Europe/Helsinki"))
     except ZoneInfoNotFoundError:  # no tz database (e.g. Windows without tzdata): keep UTC
-        pass
-    return f"{now.day} {now:%b %Y}"
+        return now
 
 
 def fetch_stats():
@@ -110,27 +111,50 @@ def fetch_stats():
         "followers": user["followers"],
         "age": f"{months // 12}y {months % 12}m" if months >= 12 else f"{months}m",
         "langs": [lang for lang, _ in sorted(langs.items(), key=lambda kv: kv[1], reverse=True)],
-        "updated": helsinki_date(now),
     }
 
 
 # ---------------------------------------------------------------- glucose trace (illustrative)
 
-CTRL = [142, 138, 135, 140, 156, 178, 192, 196, 186, 166, 140, 112, 88]  # every 15 min, last 3 h
-FORECAST = [82, 77, 72, 67, 62, 58]  # next 30 min, every 5 min
-
-
-def catmull(t):
-    i = min(int(t // 15), len(CTRL) - 2)
+def catmull(ctrl, t):
+    """Catmull-Rom interpolation of `ctrl` (one value every 15 min) at minute `t`."""
+    i = min(int(t // 15), len(ctrl) - 2)
     u = t / 15 - i
-    p0, p1, p2, p3 = CTRL[max(i - 1, 0)], CTRL[i], CTRL[i + 1], CTRL[min(i + 2, len(CTRL) - 1)]
+    p0, p1, p2, p3 = ctrl[max(i - 1, 0)], ctrl[i], ctrl[i + 1], ctrl[min(i + 2, len(ctrl) - 1)]
     return 0.5 * (2 * p1 + (p2 - p0) * u + (2 * p0 - 5 * p1 + 4 * p2 - p3) * u * u
                   + (3 * p1 - p0 - 3 * p2 + p3) * u ** 3)
 
 
-def readings():
-    rng = random.Random(7)  # fixed seed: sensor-like jitter that stays the same every run
-    return [(t, catmull(t) + (rng.uniform(-2.5, 2.5) if t < 180 else 0)) for t in range(0, 181, 5)]
+def daily_trace(day):
+    """A new 3 h trace + 30 min forecast every day (seeded by the date, so it is stable within a day).
+    The shape varies, but the story stays: glucose is falling and a low is predicted within 30 minutes."""
+    rng = random.Random(day.toordinal())
+    now = rng.randint(82, 96)
+    start, peak = rng.randint(105, 160), rng.randint(165, 215)
+    peak_t = rng.choice([45, 60, 75, 90, 105])
+
+    # rise: start (optional dip) -> post-meal peak, eased between key points
+    keys = [(0, start), (peak_t, peak)]
+    if rng.random() < .5:
+        keys.insert(1, (peak_t - 30, start - rng.randint(5, 20)))
+    # fall: peak -> now along now + (peak - now) * (1 - x^q), flat at the peak and steepest at "now"
+    q = rng.uniform(1.3, 1.9)
+    ctrl = []
+    for t in range(0, 181, 15):
+        if t <= peak_t:
+            (ta, ga), (tb, gb) = next((a, b) for a, b in zip(keys, keys[1:]) if a[0] <= t <= b[0])
+            g = ga + (gb - ga) * (1 - math.cos(math.pi * (t - ta) / (tb - ta))) / 2
+        else:
+            g = now + (peak - now) * (1 - ((t - peak_t) / (180 - peak_t)) ** q)
+        on_key = t in (0, peak_t) or t >= 165 or any(t == k for k, _ in keys)
+        ctrl.append(g + (0 if on_key else rng.uniform(-6, 6)))
+
+    # forecast continues the current fall rate (mg/dL per 5 min), steep enough to end below 70
+    drop = q * (peak - now) * 5 / (180 - peak_t)
+    drop = max(min(drop, 7), 3.5, (now - 64) / 5.1)
+    forecast = [round(now - drop * (i + 1) * (1 - .03 * i)) for i in range(6)]
+    readings = [(t, catmull(ctrl, t) + (rng.uniform(-2.5, 2.5) if t < 180 else 0)) for t in range(0, 181, 5)]
+    return {"readings": readings, "forecast": forecast, "now": now}
 
 
 # ---------------------------------------------------------------- drawing
@@ -193,7 +217,7 @@ def svg_open(s, c, w, h, r):
             f'<path d="{outline}" fill="{c["bg"]}" stroke="{c["border"]}"/>']  # open at the bottom
 
 
-def ring(c, cx, cy, r, stroke, num_size):
+def ring(c, value, cx, cy, r, stroke, num_size):
     """Current reading with a falling (45 degree) trend arrow on the ring's edge."""
     k = r / 56
     tip = (cx + (r + 22 * k) * .7071, cy + (r + 22 * k) * .7071)
@@ -204,12 +228,12 @@ def ring(c, cx, cy, r, stroke, num_size):
             f'<polygon class="fade" style="animation-delay:1.2s" fill="{c["ring"]}" points="'
             f'{tip[0]:.1f},{tip[1]:.1f} {b1[0]:.1f},{b1[1]:.1f} {b2[0]:.1f},{b2[1]:.1f}"/>',
             f'<text class="fade" x="{cx}" y="{cy + num_size * .2:.1f}" font-size="{num_size}" font-weight="700" '
-            f'fill="{c["text"]}" text-anchor="middle">{CTRL[-1]}</text>',
+            f'fill="{c["text"]}" text-anchor="middle">{value}</text>',
             f'<text x="{cx}" y="{cy + num_size * .7:.1f}" font-size="{12 if num_size > 32 else 10}" '
             f'fill="{c["muted"]}" text-anchor="middle">mg/dL</text>']
 
 
-def graph(c, x0, x1, top, y0, y1, compact=False):
+def graph(c, trace, x0, x1, top, y0, y1, compact=False):
     """CGM-app style graph: title + hour selector at `top`, plot between y0 and y1, time axis below."""
     def gx(t): return x0 + t * (x1 - x0) / 210
     def gy(g): return y1 - (g - 40) * (y1 - y0) / 260
@@ -238,19 +262,21 @@ def graph(c, x0, x1, top, y0, y1, compact=False):
         out.append(f'<text x="{x1 + fs + 2}" y="{gy(g) + fs / 3:.1f}" font-size="{fs}" fill="{color}">{g}</text>')
     for t, label in [(0, "-3h"), (60, "-2h"), (120, "-1h"), (180, "Now"), (210, "+30m")]:
         anchor = "start" if t == 0 else "end" if t == 210 else "middle"
-        out.append(f'<text x="{gx(t):.1f}" y="{y1 + 24}" font-size="{fs}" fill="{c["muted"]}" '
-                   f'text-anchor="{anchor}">{label}</text>')
-    out.append(f'<line x1="{gx(180):.1f}" y1="{y0 + 18}" x2="{gx(180):.1f}" y2="{y1}" stroke="{c["faint"]}"/>')
+        now = ' font-weight="700"' if t == 180 else ""
+        out.append(f'<text x="{gx(t):.1f}" y="{y1 + 24}" font-size="{fs}" fill="{c["text"] if now else c["muted"]}"'
+                   f'{now} text-anchor="{anchor}">{label}</text>')
+    out.append(f'<line x1="{gx(180):.1f}" y1="{y0 + 18}" x2="{gx(180):.1f}" y2="{y1 + 8}" stroke="{c["muted"]}" '
+               f'stroke-width="1.5" stroke-dasharray="4 3"/>')
 
     # readings (filled) and forecast (hollow), colored by range like a CGM app
-    pts = readings()
+    pts = trace["readings"]
     for i, (t, g) in enumerate(pts):
         out.append(f'<circle class="pop" style="animation-delay:{i * 35}ms" cx="{gx(t):.1f}" cy="{gy(g):.1f}" '
                    f'r="{dot}" fill="{tone(g)}"/>')
     t_now, g_now = pts[-1]
     out.append(f'<circle class="pulse" cx="{gx(t_now):.1f}" cy="{gy(g_now):.1f}" r="{dot}" fill="none" '
                f'stroke="{c["dot"]}" stroke-width="1.5"/>')
-    for i, g in enumerate(FORECAST):
+    for i, g in enumerate(trace["forecast"]):
         delay = len(pts) * 35 + 200 + i * 80
         out.append(f'<circle class="fc" style="animation-delay:{delay}ms,{delay + 600}ms" '
                    f'cx="{gx(185 + 5 * i):.1f}" cy="{gy(g):.1f}" r="{dot * .86:.1f}" fill="none" '
@@ -317,12 +343,12 @@ def card(s, c):
             f'<text x="{W - PAD}" y="60" font-size="12" fill="{c["muted"]}" text-anchor="end">'
             f'Updated {s["updated"]}</text>',
             f'<line x1="{PAD}" y1="118" x2="{W - PAD}" y2="118" stroke="{c["faint"]}"/>']
-    out += ring(c, 106, 206, 56, 7, 40)
+    out += ring(c, s["trace"]["now"], 106, 206, 56, 7, 40)
     out += [f'<text class="hd" x="200" y="170">FOCUS</text>',
             f'<text x="200" y="196" font-size="17" fill="{c["text"]}">{escape(FOCUS)}</text>',
             f'<text class="hd" x="200" y="230">NOW</text>',
             f'<text x="200" y="256" font-size="17" fill="{c["text"]}">{escape(NOW)}</text>']
-    out += graph(c, PAD, 800, 300, 330, 520)
+    out += graph(c, s["trace"], PAD, 800, 300, 330, 520)
     out.append(f'<line x1="{PAD}" y1="580" x2="{W - PAD}" y2="580" stroke="{c["faint"]}"/>')
     out += tiles(s, c, PAD, 600, W - 2 * PAD, 4, 26)
     out += languages(s, c, PAD, 700, W - 2 * PAD)[0]
@@ -341,7 +367,7 @@ def card_mobile(s, c):
             f'<line x1="{MPAD}" y1="108" x2="{MW - MPAD}" y2="108" stroke="{c["faint"]}"/>']
 
     # ring beside the focus areas (one per line), then the current work full width
-    out += ring(c, MPAD + 44, 172, 42, 6, 30)
+    out += ring(c, s["trace"]["now"], MPAD + 44, 172, 42, 6, 30)
     out.append(f'<text class="hd" x="134" y="140">FOCUS</text>')
     for i, area in enumerate(FOCUS.split(" · ")):
         out.append(f'<text x="134" y="{162 + i * 20}" font-size="15" fill="{c["text"]}">{escape(area)}</text>')
@@ -351,7 +377,7 @@ def card_mobile(s, c):
         out.append(f'<text x="{MPAD}" y="{268 + i * 20}" font-size="15" fill="{c["text"]}">{escape(line)}</text>')
     y = 268 + (len(now_lines) - 1) * 20
 
-    out += graph(c, MPAD, MW - MPAD - 30, y + 52, y + 74, y + 214, compact=True)
+    out += graph(c, s["trace"], MPAD, MW - MPAD - 30, y + 52, y + 74, y + 214, compact=True)
     y += 266
     out.append(f'<line x1="{MPAD}" y1="{y}" x2="{MW - MPAD}" y2="{y}" stroke="{c["faint"]}"/>')
     out += tiles(s, c, MPAD, y + 20, cw, 2, 24)
@@ -409,6 +435,9 @@ def main():
     out = Path(sys.argv[1])
     out.mkdir(parents=True, exist_ok=True)
     stats = fetch_stats()
+    today = helsinki_now()
+    stats["updated"] = f"{today.day} {today:%b %Y}"
+    stats["trace"] = daily_trace(today.date())
     for theme, colors in THEMES.items():
         (out / f"card-{theme}.svg").write_text(card(stats, colors), encoding="utf-8")
         (out / f"card-mobile-{theme}.svg").write_text(card_mobile(stats, colors), encoding="utf-8")
@@ -416,7 +445,8 @@ def main():
             for mobile, suffix in [(False, ""), (True, "-mobile")]:
                 (out / f"{file}{suffix}-{theme}.svg").write_text(
                     social_slice(i, icon_name, title, handle, brand, colors, mobile), encoding="utf-8")
-    print(json.dumps({k: v for k, v in stats.items() if k != "langs"}), stats["langs"][:5])
+    print(json.dumps({k: v for k, v in stats.items() if k not in ("langs", "trace")}), stats["langs"][:5],
+          "now:", stats["trace"]["now"], "forecast:", stats["trace"]["forecast"])
 
 
 if __name__ == "__main__":
