@@ -17,11 +17,10 @@ USER = "michalkwak"
 NAME = "Michał Kwak"
 SUBTITLE = "@michalkwak · University of Helsinki · Helsinki"
 FOCUS = "Software development · Data science · AI in Biomedicine"
-NOW = "Machine Learning for Hypoglycemia Prediction"
-ABOUT = ("I'm a developer and data scientist at the University of Helsinki, working where software meets "
-         "biomedicine. I like building things end to end, from data pipelines and models to the apps people "
-         "actually use. Right now I'm applying machine learning to continuous glucose monitoring data to "
-         "predict hypoglycemia before it happens.")
+ABOUT = ("I'm a software developer and data scientist at the University of Helsinki.  "
+         "I enjoy building projectsthat solve real-world problems. "
+         "My current work focuses on applying machine learning methods "
+         "to predict hypoglycemia in type 1 diabetic people.")
 STACK = ["python", "r", "jupyter", "numpy", "pandas", "scikitlearn", "streamlit", "django",  # data / ML first
          "javascript", "react", "nodedotjs", "postgresql", "git"]
 SOCIALS = [  # (file name, icon, title, handle, brand color); each becomes one clickable slice of the card
@@ -159,7 +158,7 @@ def svg_open(s, c, w, h, r):
     return [f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}" '
             f'role="img" aria-labelledby="t d">',
             f'<title id="t">{escape(NAME)}</title>',
-            f'<desc id="d">{escape(FOCUS)}. {escape(NOW)}. {escape(ABOUT)} {s["repos"]} repositories, '
+            f'<desc id="d">{escape(FOCUS)}. {escape(ABOUT)} {s["repos"]} repositories, '
             f'{s["commits"]} commits, {s["followers"]} followers.</desc>',
             style(c),
             f'<path d="{outline}" fill="{c["bg"]}" stroke="{c["border"]}"/>']  # open at the bottom
@@ -232,10 +231,8 @@ def card(s, c):
             f'Updated {s["updated"]}</text>',
             f'<line x1="{PAD}" y1="118" x2="{W - PAD}" y2="118" stroke="{c["faint"]}"/>']
     out += [f'<text class="hd" x="{PAD}" y="158">FOCUS</text>',
-            f'<text x="{PAD}" y="184" font-size="17" fill="{c["text"]}">{escape(FOCUS)}</text>',
-            f'<text class="hd" x="{PAD}" y="218">NOW</text>',
-            f'<text x="{PAD}" y="244" font-size="17" fill="{c["text"]}">{escape(NOW)}</text>']
-    text, y = about(c, PAD, 288, W - 2 * PAD, 16, 26)
+            f'<text x="{PAD}" y="184" font-size="17" fill="{c["text"]}">{escape(FOCUS)}</text>']
+    text, y = about(c, PAD, 228, W - 2 * PAD, 16, 26)
     out += text
     y += 40
     out.append(f'<line x1="{PAD}" y1="{y}" x2="{W - PAD}" y2="{y}" stroke="{c["faint"]}"/>')
@@ -255,17 +252,13 @@ def card_mobile(s, c):
             f'<text x="{MPAD + 14}" y="90" font-size="11" fill="{c["muted"]}">Updated {s["updated"]}</text>',
             f'<line x1="{MPAD}" y1="108" x2="{MW - MPAD}" y2="108" stroke="{c["faint"]}"/>']
 
-    # focus areas (one per line), then the current work and the paragraph full width
+    # focus areas (one per line), then the paragraph full width
     out.append(f'<text class="hd" x="{MPAD}" y="140">FOCUS</text>')
-    for i, area in enumerate(FOCUS.split(" · ")):
+    areas = FOCUS.split(" · ")
+    for i, area in enumerate(areas):
         out.append(f'<text x="{MPAD}" y="{162 + i * 20}" font-size="15" fill="{c["text"]}">{escape(area)}</text>')
-    out.append(f'<text class="hd" x="{MPAD}" y="246">NOW</text>')
-    now_lines = wrap(NOW.split(), " ", 15, cw)
-    for i, line in enumerate(now_lines):
-        out.append(f'<text x="{MPAD}" y="{268 + i * 20}" font-size="15" fill="{c["text"]}">{escape(line)}</text>')
-    y = 268 + (len(now_lines) - 1) * 20
 
-    text, y = about(c, MPAD, y + 44, cw, 15, 22)
+    text, y = about(c, MPAD, 162 + (len(areas) - 1) * 20 + 44, cw, 15, 22)
     out += text
     y += 32
     out.append(f'<line x1="{MPAD}" y1="{y}" x2="{MW - MPAD}" y2="{y}" stroke="{c["faint"]}"/>')
