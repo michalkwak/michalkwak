@@ -5,9 +5,7 @@ Usage: python scripts/profile_card.py OUT_DIR
 GITHUB_TOKEN (optional) enables the GraphQL commit count and higher API rate limits.
 """
 import json
-import math
 import os
-import random
 import sys
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -20,6 +18,10 @@ NAME = "Michał Kwak"
 SUBTITLE = "@michalkwak · University of Helsinki · Helsinki"
 FOCUS = "Software development · Data science · AI in Biomedicine"
 NOW = "Machine Learning for Hypoglycemia Prediction"
+ABOUT = ("I'm a developer and data scientist at the University of Helsinki, working where software meets "
+         "biomedicine. I like building things end to end, from data pipelines and models to the apps people "
+         "actually use. Right now I'm applying machine learning to continuous glucose monitoring data to "
+         "predict hypoglycemia before it happens.")
 STACK = ["python", "r", "jupyter", "numpy", "pandas", "scikitlearn", "streamlit", "django",  # data / ML first
          "javascript", "react", "nodedotjs", "postgresql", "git"]
 SOCIALS = [  # (file name, icon, title, handle, brand color); each becomes one clickable slice of the card
@@ -38,11 +40,9 @@ FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
 THEMES = {
     # bg matches GitHub's page background so seams between the card's image slices stay invisible
     "dark": dict(bg="#0d1117", border="#21262d", text="#f2f4f7", muted="#8b939d", faint="#262c34",
-                 band="#161b22", dot="#e8eaed", high="#f5c400", low="#ff4f4f", ring="#c7ccd2",
-                 live="#3ddc84", icon="#c7ccd2", pill="#1c2128", btn="#161b22", btn_edge="#30363d"),
+                 live="#3ddc84", icon="#c7ccd2", btn="#161b22", btn_edge="#30363d"),
     "light": dict(bg="#ffffff", border="#e3e6ea", text="#14171a", muted="#5f6873", faint="#e6e9ed",
-                  band="#f1f3f5", dot="#30353b", high="#d9a400", low="#e53935", ring="#3a3f45",
-                  live="#1aa260", icon="#3a3f45", pill="#eef0f3", btn="#f6f8fa", btn_edge="#d0d7de"),
+                  live="#1aa260", icon="#3a3f45", btn="#f6f8fa", btn_edge="#d0d7de"),
 }
 
 API = "https://api.github.com"
@@ -114,53 +114,10 @@ def fetch_stats():
     }
 
 
-# ---------------------------------------------------------------- glucose trace (illustrative)
-
-def catmull(ctrl, t):
-    """Catmull-Rom interpolation of `ctrl` (one value every 15 min) at minute `t`."""
-    i = min(int(t // 15), len(ctrl) - 2)
-    u = t / 15 - i
-    p0, p1, p2, p3 = ctrl[max(i - 1, 0)], ctrl[i], ctrl[i + 1], ctrl[min(i + 2, len(ctrl) - 1)]
-    return 0.5 * (2 * p1 + (p2 - p0) * u + (2 * p0 - 5 * p1 + 4 * p2 - p3) * u * u
-                  + (3 * p1 - p0 - 3 * p2 + p3) * u ** 3)
-
-
-def daily_trace(day):
-    """A new 3 h trace + 30 min forecast every day (seeded by the date, so it is stable within a day).
-    The shape varies, but the story stays: glucose is falling and a low is predicted within 30 minutes."""
-    rng = random.Random(day.toordinal())
-    now = rng.randint(82, 96)
-    start, peak = rng.randint(105, 160), rng.randint(165, 215)
-    peak_t = rng.choice([45, 60, 75, 90, 105])
-
-    # rise: start (optional dip) -> post-meal peak, eased between key points
-    keys = [(0, start), (peak_t, peak)]
-    if rng.random() < .5:
-        keys.insert(1, (peak_t - 30, start - rng.randint(5, 20)))
-    # fall: peak -> now along now + (peak - now) * (1 - x^q), flat at the peak and steepest at "now"
-    q = rng.uniform(1.3, 1.9)
-    ctrl = []
-    for t in range(0, 181, 15):
-        if t <= peak_t:
-            (ta, ga), (tb, gb) = next((a, b) for a, b in zip(keys, keys[1:]) if a[0] <= t <= b[0])
-            g = ga + (gb - ga) * (1 - math.cos(math.pi * (t - ta) / (tb - ta))) / 2
-        else:
-            g = now + (peak - now) * (1 - ((t - peak_t) / (180 - peak_t)) ** q)
-        on_key = t in (0, peak_t) or t >= 165 or any(t == k for k, _ in keys)
-        ctrl.append(g + (0 if on_key else rng.uniform(-6, 6)))
-
-    # forecast continues the current fall rate (mg/dL per 5 min), steep enough to end below 70
-    drop = q * (peak - now) * 5 / (180 - peak_t)
-    drop = max(min(drop, 7), 3.5, (now - 64) / 5.1)
-    forecast = [round(now - drop * (i + 1) * (1 - .03 * i)) for i in range(6)]
-    readings = [(t, catmull(ctrl, t) + (rng.uniform(-2.5, 2.5) if t < 180 else 0)) for t in range(0, 181, 5)]
-    return {"readings": readings, "forecast": forecast, "now": now}
-
-
 # ---------------------------------------------------------------- drawing
 
-W, H, PAD, R = 900, 872, 40, 18         # desktop: card top (social slices close it below), corner radius
-MW, MPAD, MR = 402, 20, 14              # mobile: same structure, single column (height follows content)
+W, PAD, R = 900, 40, 18                 # desktop: card top (social slices close it below), corner radius
+MW, MPAD, MR = 402, 20, 14              # mobile: same structure, single column (heights follow content)
 ROW_H, M_ROW_H = 88, 96                 # social row height (desktop, mobile)
 
 
@@ -187,21 +144,12 @@ def style(c):
     text {{ font-family: {FONT}; font-variant-numeric: tabular-nums; }}
     .lbl {{ font-size: 11px; letter-spacing: 1.6px; fill: {c['muted']}; }}
     .hd {{ font-size: 13px; font-weight: 700; letter-spacing: 1.8px; fill: {c['text']}; }}
-    .pop {{ transform-box: fill-box; transform-origin: center; animation: pop .45s ease-out backwards; }}
-    .fc {{ transform-box: fill-box; transform-origin: center;
-           animation: pop .45s ease-out backwards, breathe 2.8s ease-in-out infinite; }}
-    .ring {{ stroke-dasharray: 1; animation: draw 1.4s ease-out backwards; }}
     .fade {{ animation: fade .8s ease-out backwards; }}
     .grow {{ transform-box: fill-box; transform-origin: left; animation: grow 1.2s ease-out .4s backwards; }}
-    .pulse {{ transform-box: fill-box; transform-origin: center; opacity: 0;
-              animation: pulse 2.4s ease-out 2.2s infinite; }}
     .live {{ animation: breathe 2.4s ease-in-out infinite; }}
-    @keyframes pop {{ from {{ opacity: 0; transform: scale(.3); }} }}
     @keyframes fade {{ from {{ opacity: 0; }} }}
-    @keyframes draw {{ from {{ stroke-dashoffset: 1; }} to {{ stroke-dashoffset: 0; }} }}
     @keyframes grow {{ from {{ transform: scaleX(0); }} }}
     @keyframes breathe {{ 50% {{ opacity: .35; }} }}
-    @keyframes pulse {{ 0% {{ opacity: .7; transform: scale(1); }} 100% {{ opacity: 0; transform: scale(3); }} }}
     @media (prefers-reduced-motion: reduce) {{ * {{ animation: none !important; }} }}
   </style>"""
 
@@ -211,79 +159,20 @@ def svg_open(s, c, w, h, r):
     return [f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}" '
             f'role="img" aria-labelledby="t d">',
             f'<title id="t">{escape(NAME)}</title>',
-            f'<desc id="d">{escape(FOCUS)}. {escape(NOW)}. {s["repos"]} repositories, '
+            f'<desc id="d">{escape(FOCUS)}. {escape(NOW)}. {escape(ABOUT)} {s["repos"]} repositories, '
             f'{s["commits"]} commits, {s["followers"]} followers.</desc>',
             style(c),
             f'<path d="{outline}" fill="{c["bg"]}" stroke="{c["border"]}"/>']  # open at the bottom
 
 
-def ring(c, value, cx, cy, r, stroke, num_size):
-    """Current reading with a falling (45 degree) trend arrow on the ring's edge."""
-    k = r / 56
-    tip = (cx + (r + 22 * k) * .7071, cy + (r + 22 * k) * .7071)
-    b1 = (cx + (r + 9 * k) * .7071, cy + (r - 9 * k) * .7071)
-    b2 = (cx + (r - 9 * k) * .7071, cy + (r + 9 * k) * .7071)
-    return [f'<circle class="ring" cx="{cx}" cy="{cy}" r="{r}" pathLength="1" fill="none" stroke="{c["ring"]}" '
-            f'stroke-width="{stroke}" transform="rotate(-90 {cx} {cy})"/>',
-            f'<polygon class="fade" style="animation-delay:1.2s" fill="{c["ring"]}" points="'
-            f'{tip[0]:.1f},{tip[1]:.1f} {b1[0]:.1f},{b1[1]:.1f} {b2[0]:.1f},{b2[1]:.1f}"/>',
-            f'<text class="fade" x="{cx}" y="{cy + num_size * .2:.1f}" font-size="{num_size}" font-weight="700" '
-            f'fill="{c["text"]}" text-anchor="middle">{value}</text>',
-            f'<text x="{cx}" y="{cy + num_size * .7:.1f}" font-size="{12 if num_size > 32 else 10}" '
-            f'fill="{c["muted"]}" text-anchor="middle">mg/dL</text>']
-
-
-def graph(c, trace, x0, x1, top, y0, y1, compact=False):
-    """CGM-app style graph: title + hour selector at `top`, plot between y0 and y1, time axis below."""
-    def gx(t): return x0 + t * (x1 - x0) / 210
-    def gy(g): return y1 - (g - 40) * (y1 - y0) / 260
-    def tone(g): return c["high"] if g > 180 else c["low"] if g < 70 else c["dot"]
-    fs, dot = (10, 2.8) if compact else (12, 4.2)
-    right = x1 + (30 if compact else 60)  # right edge of the axis labels
-
-    out = [f'<text class="lbl" x="{x0}" y="{top}">CGM · LAST 3 HOURS</text>']
-    hours = ["3", "6", "12", "24"]
-    pill_w = 4 * 32 + 6 + (0 if compact else 78)
-    sx = right - pill_w
-    out += [f'<rect x="{sx}" y="{top - 18}" width="{pill_w}" height="28" rx="14" fill="{c["pill"]}"/>',
-            f'<rect x="{sx + 3}" y="{top - 15}" width="30" height="22" rx="11" fill="{c["text"]}"/>']
-    for i, h in enumerate(hours):
-        out.append(f'<text x="{sx + 18 + i * 32}" y="{top}" font-size="12" font-weight="600" '
-                   f'fill="{c["bg"] if i == 0 else c["muted"]}" text-anchor="middle">{h}</text>')
-    if not compact:
-        out.append(f'<text x="{sx + 170}" y="{top}" font-size="11" letter-spacing="1.2" fill="{c["muted"]}" '
-                   f'text-anchor="middle">HOURS</text>')
-
-    out += [f'<rect x="{x0}" y="{gy(180):.1f}" width="{x1 - x0}" height="{gy(70) - gy(180):.1f}" fill="{c["band"]}"/>',
-            f'<line x1="{x0}" y1="{gy(250):.1f}" x2="{x1}" y2="{gy(250):.1f}" stroke="{c["faint"]}" stroke-dasharray="2 4"/>',
-            f'<line x1="{x0}" y1="{gy(180):.1f}" x2="{x1}" y2="{gy(180):.1f}" stroke="{c["high"]}" stroke-width="1.5"/>',
-            f'<line x1="{x0}" y1="{gy(70):.1f}" x2="{x1}" y2="{gy(70):.1f}" stroke="{c["low"]}" stroke-width="1.5"/>']
-    for g, color in [(250, c["muted"]), (180, c["high"]), (70, c["low"])]:
-        out.append(f'<text x="{x1 + fs + 2}" y="{gy(g) + fs / 3:.1f}" font-size="{fs}" fill="{color}">{g}</text>')
-    for t, label in [(0, "-3h"), (60, "-2h"), (120, "-1h"), (180, "Now"), (210, "+30m")]:
-        anchor = "start" if t == 0 else "end" if t == 210 else "middle"
-        now = ' font-weight="700"' if t == 180 else ""
-        out.append(f'<text x="{gx(t):.1f}" y="{y1 + 24}" font-size="{fs}" fill="{c["text"] if now else c["muted"]}"'
-                   f'{now} text-anchor="{anchor}">{label}</text>')
-    out.append(f'<line x1="{gx(180):.1f}" y1="{y0 + 18}" x2="{gx(180):.1f}" y2="{y1 + 8}" stroke="{c["muted"]}" '
-               f'stroke-width="1.5" stroke-dasharray="4 3"/>')
-
-    # readings (filled) and forecast (hollow), colored by range like a CGM app
-    pts = trace["readings"]
-    for i, (t, g) in enumerate(pts):
-        out.append(f'<circle class="pop" style="animation-delay:{i * 35}ms" cx="{gx(t):.1f}" cy="{gy(g):.1f}" '
-                   f'r="{dot}" fill="{tone(g)}"/>')
-    t_now, g_now = pts[-1]
-    out.append(f'<circle class="pulse" cx="{gx(t_now):.1f}" cy="{gy(g_now):.1f}" r="{dot}" fill="none" '
-               f'stroke="{c["dot"]}" stroke-width="1.5"/>')
-    for i, g in enumerate(trace["forecast"]):
-        delay = len(pts) * 35 + 200 + i * 80
-        out.append(f'<circle class="fc" style="animation-delay:{delay}ms,{delay + 600}ms" '
-                   f'cx="{gx(185 + 5 * i):.1f}" cy="{gy(g):.1f}" r="{dot * .86:.1f}" fill="none" '
-                   f'stroke="{tone(g)}" stroke-width="1.6"/>')
-    out.append(f'<text class="fade" style="animation-delay:2s" x="{x1}" y="{y0 + 4}" font-size="{fs}" '
-               f'fill="{c["low"]}" text-anchor="end">Low predicted within 30 min</text>')
-    return out
+def about(c, x, y, w, size, leading):
+    """ABOUT heading and the wrapped paragraph; returns the elements and the baseline of the last line."""
+    out = [f'<text class="hd" x="{x}" y="{y}">ABOUT</text>']
+    lines = wrap(ABOUT.split(), " ", size, w)
+    for i, line in enumerate(lines):
+        out.append(f'<text class="fade" style="animation-delay:{200 + i * 60}ms" x="{x}" y="{y + 26 + i * leading}" '
+                   f'font-size="{size}" fill="{c["text"]}">{escape(line)}</text>')
+    return out, y + 26 + (len(lines) - 1) * leading
 
 
 def tiles(s, c, x, y, w, cols, size):
@@ -336,25 +225,25 @@ def stack(c, x, y, w, per_row):
 
 
 def card(s, c):
-    out = svg_open(s, c, W, H, R)
-    out += [f'<text x="{PAD}" y="64" font-size="28" font-weight="700" fill="{c["text"]}">{escape(NAME)}</text>',
+    out = [f'<text x="{PAD}" y="64" font-size="28" font-weight="700" fill="{c["text"]}">{escape(NAME)}</text>',
             f'<text x="{PAD}" y="90" font-size="14" fill="{c["muted"]}">{escape(SUBTITLE)}</text>',
             f'<circle class="live" cx="{W - PAD - 132}" cy="56" r="4" fill="{c["live"]}"/>',
             f'<text x="{W - PAD}" y="60" font-size="12" fill="{c["muted"]}" text-anchor="end">'
             f'Updated {s["updated"]}</text>',
             f'<line x1="{PAD}" y1="118" x2="{W - PAD}" y2="118" stroke="{c["faint"]}"/>']
-    out += ring(c, s["trace"]["now"], 106, 206, 56, 7, 40)
-    out += [f'<text class="hd" x="200" y="170">FOCUS</text>',
-            f'<text x="200" y="196" font-size="17" fill="{c["text"]}">{escape(FOCUS)}</text>',
-            f'<text class="hd" x="200" y="230">NOW</text>',
-            f'<text x="200" y="256" font-size="17" fill="{c["text"]}">{escape(NOW)}</text>']
-    out += graph(c, s["trace"], PAD, 800, 300, 330, 520)
-    out.append(f'<line x1="{PAD}" y1="580" x2="{W - PAD}" y2="580" stroke="{c["faint"]}"/>')
-    out += tiles(s, c, PAD, 600, W - 2 * PAD, 4, 26)
-    out += languages(s, c, PAD, 700, W - 2 * PAD)[0]
-    out += stack(c, PAD, 790, W - 2 * PAD, len(STACK))
-    out += [f'<line x1="{PAD}" y1="852" x2="{W - PAD}" y2="852" stroke="{c["faint"]}"/>', "</svg>"]
-    return "\n".join(out) + "\n"
+    out += [f'<text class="hd" x="{PAD}" y="158">FOCUS</text>',
+            f'<text x="{PAD}" y="184" font-size="17" fill="{c["text"]}">{escape(FOCUS)}</text>',
+            f'<text class="hd" x="{PAD}" y="218">NOW</text>',
+            f'<text x="{PAD}" y="244" font-size="17" fill="{c["text"]}">{escape(NOW)}</text>']
+    text, y = about(c, PAD, 288, W - 2 * PAD, 16, 26)
+    out += text
+    y += 40
+    out.append(f'<line x1="{PAD}" y1="{y}" x2="{W - PAD}" y2="{y}" stroke="{c["faint"]}"/>')
+    out += tiles(s, c, PAD, y + 20, W - 2 * PAD, 4, 26)
+    out += languages(s, c, PAD, y + 120, W - 2 * PAD)[0]
+    out += stack(c, PAD, y + 210, W - 2 * PAD, len(STACK))
+    out += [f'<line x1="{PAD}" y1="{y + 272}" x2="{W - PAD}" y2="{y + 272}" stroke="{c["faint"]}"/>', "</svg>"]
+    return "\n".join(svg_open(s, c, W, y + 292, R) + out) + "\n"
 
 
 def card_mobile(s, c):
@@ -366,19 +255,19 @@ def card_mobile(s, c):
             f'<text x="{MPAD + 14}" y="90" font-size="11" fill="{c["muted"]}">Updated {s["updated"]}</text>',
             f'<line x1="{MPAD}" y1="108" x2="{MW - MPAD}" y2="108" stroke="{c["faint"]}"/>']
 
-    # ring beside the focus areas (one per line), then the current work full width
-    out += ring(c, s["trace"]["now"], MPAD + 44, 172, 42, 6, 30)
-    out.append(f'<text class="hd" x="134" y="140">FOCUS</text>')
+    # focus areas (one per line), then the current work and the paragraph full width
+    out.append(f'<text class="hd" x="{MPAD}" y="140">FOCUS</text>')
     for i, area in enumerate(FOCUS.split(" · ")):
-        out.append(f'<text x="134" y="{162 + i * 20}" font-size="15" fill="{c["text"]}">{escape(area)}</text>')
+        out.append(f'<text x="{MPAD}" y="{162 + i * 20}" font-size="15" fill="{c["text"]}">{escape(area)}</text>')
     out.append(f'<text class="hd" x="{MPAD}" y="246">NOW</text>')
     now_lines = wrap(NOW.split(), " ", 15, cw)
     for i, line in enumerate(now_lines):
         out.append(f'<text x="{MPAD}" y="{268 + i * 20}" font-size="15" fill="{c["text"]}">{escape(line)}</text>')
     y = 268 + (len(now_lines) - 1) * 20
 
-    out += graph(c, s["trace"], MPAD, MW - MPAD - 30, y + 52, y + 74, y + 214, compact=True)
-    y += 266
+    text, y = about(c, MPAD, y + 44, cw, 15, 22)
+    out += text
+    y += 32
     out.append(f'<line x1="{MPAD}" y1="{y}" x2="{MW - MPAD}" y2="{y}" stroke="{c["faint"]}"/>')
     out += tiles(s, c, MPAD, y + 20, cw, 2, 24)
     lang, legend_bottom = languages(s, c, MPAD, y + 180, cw, names_under=False)
@@ -437,7 +326,6 @@ def main():
     stats = fetch_stats()
     today = helsinki_now()
     stats["updated"] = f"{today.day} {today:%b %Y}"
-    stats["trace"] = daily_trace(today.date())
     for theme, colors in THEMES.items():
         (out / f"card-{theme}.svg").write_text(card(stats, colors), encoding="utf-8")
         (out / f"card-mobile-{theme}.svg").write_text(card_mobile(stats, colors), encoding="utf-8")
@@ -445,8 +333,7 @@ def main():
             for mobile, suffix in [(False, ""), (True, "-mobile")]:
                 (out / f"{file}{suffix}-{theme}.svg").write_text(
                     social_slice(i, icon_name, title, handle, brand, colors, mobile), encoding="utf-8")
-    print(json.dumps({k: v for k, v in stats.items() if k not in ("langs", "trace")}), stats["langs"][:5],
-          "now:", stats["trace"]["now"], "forecast:", stats["trace"]["forecast"])
+    print(json.dumps({k: v for k, v in stats.items() if k != "langs"}), stats["langs"][:5])
 
 
 if __name__ == "__main__":
