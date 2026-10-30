@@ -17,8 +17,8 @@ USER = "michalkwak"
 NAME = "Michał Kwak"
 SUBTITLE = "@michalkwak · University of Helsinki · Helsinki"
 FOCUS = "Software development · Data science · AI in Biomedicine"
-ABOUT = ("I'm a software developer and data scientist at the University of Helsinki.  "
-         "I enjoy building projectsthat solve real-world problems. "
+ABOUT = ("I'm a software developer and data scientist at the University of Helsinki. "
+         "I build projects that solve real-world problems. "
          "My current work focuses on applying machine learning methods "
          "to predict hypoglycemia in type 1 diabetic people.")
 STACK = ["python", "r", "jupyter", "numpy", "pandas", "scikitlearn", "streamlit", "django",  # data / ML first
